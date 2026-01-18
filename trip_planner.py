@@ -191,7 +191,7 @@ Please create a comprehensive travel plan including:
 2. Estimated costs for accommodations, food, transportation, and activities
 3. Local food recommendations and cultural tips
 """
-    result = await Runner.run(travel_agent, prompt)
+    result = await Runner.run(travel_agent, prompt, max_turns=30)
     return result.final_output
 
 # ---- Main App Logic ----
