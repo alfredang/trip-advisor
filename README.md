@@ -16,6 +16,7 @@ An interactive Streamlit web app that uses multiple specialized AI agents to cre
 | 🧠 **Planner Agent** | Creates day-by-day itineraries |
 | 💰 **Budget Agent** | Estimates and tracks costs |
 | 🍣 **Local Guide Agent** | Recommends food & local tips |
+| 🔍 **Research Agent** | Fetches current travel updates (used sparingly) |
 | ✈️ **Travel Agent** | Orchestrates all agents and produces the final plan |
 
 ## Installation
@@ -54,6 +55,7 @@ The app will display your personalized trip plan with:
 - 📋 Day-by-day itinerary
 - 💰 Budget breakdown
 - 🍣 Local recommendations and tips
+- 🔍 Current travel updates (when available)
 - 📥 Download option for your trip plan
 
 ## Tech Stack
