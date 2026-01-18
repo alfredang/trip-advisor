@@ -2,28 +2,13 @@ from dotenv import load_dotenv
 import os
 import streamlit as st
 import asyncio
-from agents import Runner, Agent, OpenAIChatCompletionsModel, AsyncOpenAI, set_tracing_disabled, function_tool
+from agents import Runner, Agent, OpenAIChatCompletionsModel, AsyncOpenAI, set_tracing_disabled
 from pydantic import BaseModel
-from tavily import TavilyClient
 
 set_tracing_disabled(disabled=True)
 
 load_dotenv()
 api_key = os.environ.get("GEMINI_API_KEY")
-tavily_key = os.environ.get("TAVILY_API_KEY")
-
-@function_tool
-def tavily_search(query: str) -> str:
-    """Search the internet using Tavily API for current information."""
-    tavily = TavilyClient(api_key=tavily_key)
-    response = tavily.search(query=query, search_depth="basic")
-
-    results = response.get('results', [])
-    summary = "\n".join([f"Source: {res['url']}\nContent: {res['content']}" for res in results])
-    return summary
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
 # ---- Streamlit Page Config ----
 st.set_page_config(
@@ -51,30 +36,25 @@ class TravelOutput(BaseModel):
 planner_agent = Agent(
     name="Planner Agent",
     model=OpenAIChatCompletionsModel(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash-lite",
         openai_client=client
     ),
-    handoff_description="Use me when the user asks to plan or outline an itinerary, schedule, or daily plan.",
     instructions=(
-        "You specialize in building day-by-day travel itineraries and sequencing activities. "
-        'Always return JSON with this structure: {"destination":"string","duration":"string","summary":"string"}.'
+        "Create a day-by-day travel itinerary. Be concise and respond in one message. "
+        "Include key attractions and activities for each day."
     ),
-    tools=[
-        tavily_search,
-    ]
 )
 
 # ---- Budget Agent (estimates costs under constraints) ----
 budget_agent = Agent(
     name="Budget Agent",
     model=OpenAIChatCompletionsModel(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash-lite",
         openai_client=client
     ),
-    handoff_description="Use me when the user mentions budget, price, cost, dollars, under $X, or asks 'how much'.",
     instructions=(
-        "You estimate costs for lodging, food, transport, and activities at a high level; flag budget violations. "
-        'Always return JSON with this structure: {"cost":"string"}.'
+        "Estimate travel costs for lodging, food, transport, and activities. Be concise and respond in one message. "
+        "Provide a breakdown and total estimate."
     ),
 )
 
@@ -82,52 +62,41 @@ budget_agent = Agent(
 local_guide_agent = Agent(
     name="Local Guide Agent",
     model=OpenAIChatCompletionsModel(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash-lite",
         openai_client=client
     ),
-    handoff_description="Use me when the user asks for food, restaurants, neighborhoods, local tips, or 'what's good nearby'.",
     instructions=(
-        "You provide restaurants, neighborhoods, cultural tips, and current local highlights. "
-        'Always return JSON with this structure: {"tips":"string"}.'
+        "Provide local food recommendations, restaurant suggestions, and cultural tips. Be concise and respond in one message."
     ),
-    tools=[
-        tavily_search,
-    ]
 )
 
 # ---- Core orchestrator: Travel Agent ----
 travel_agent = Agent(
     name="Travel Agent",
     model=OpenAIChatCompletionsModel(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash-lite",
         openai_client=client
     ),
     instructions=(
-        "You are a friendly and knowledgeable travel planner that helps users plan trips, suggest destinations, and create detailed summaries of their journeys.\n"
-        "Your primary role is to orchestrate other specialized agents (used as tools) to complete the user's request.\n"
-        "\n"
-        "When planning an itinerary, call the **Planner Agent** to create daily schedules, organize destinations, and recommend attractions or activities. Do not create itineraries yourself.\n"
-        "When estimating costs, call the **Budget Agent** to calculate the total trip cost including flights, hotels, and activities. Do not calculate or estimate prices on your own.\n"
-        "When recommending local experiences, restaurants, neighborhoods, or cultural highlights, call the **Local Guide Agent** to provide these insights. Do not generate local recommendations without this agent.\n"
-        "\n"
-        "Use these agents one at a time in a logical order based on the request — start with the Planner Agent, then the Budget Agent, and finally the Local Guide Agent.\n"
-        "After receiving results from these agents, combine their outputs into a single structured summary.\n"
-        "\n"
-        "Return JSON output using this exact structure:\n"
-        "{\"destination\": \"string\", \"duration\": \"string\", \"summary\": \"string\", \"cost\": \"string\", \"tips\": \"string\"}.\n"
+        "You orchestrate travel planning by calling these agents IN PARALLEL (all at once, not sequentially):\n"
+        "1. planner_agent - for the itinerary\n"
+        "2. budget_agent - for cost estimates\n"
+        "3. local_guide_agent - for food and local tips\n\n"
+        "IMPORTANT: Call all three agents in a SINGLE turn to minimize API calls.\n"
+        "After receiving their responses, combine into the final JSON output immediately.\n"
+        "Do NOT use tavily_search - the agents have the knowledge needed."
     ),
     output_type=TravelOutput,
     tools=[
-        tavily_search,
         planner_agent.as_tool(
             tool_name="planner_agent",
-            tool_description="plan or outline an itinerary, schedule, or daily plan"),
+            tool_description="Creates day-by-day itinerary"),
         budget_agent.as_tool(
             tool_name="budget_agent",
-            tool_description="calculates the cost of a trip"),
+            tool_description="Estimates trip costs"),
         local_guide_agent.as_tool(
             tool_name="local_guide_agent",
-            tool_description="provide restaurants, neighborhoods, cultural tips, and current local highlights")
+            tool_description="Provides food and local tips")
     ]
 )
 
@@ -191,7 +160,7 @@ Please create a comprehensive travel plan including:
 2. Estimated costs for accommodations, food, transportation, and activities
 3. Local food recommendations and cultural tips
 """
-    result = await Runner.run(travel_agent, prompt, max_turns=30)
+    result = await Runner.run(travel_agent, prompt, max_turns=10)
     return result.final_output
 
 # ---- Main App Logic ----
