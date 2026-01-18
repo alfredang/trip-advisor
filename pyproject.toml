@@ -1,0 +1,13 @@
+[project]
+name = "trip-planner"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "openai>=2.15.0",
+    "openai-agents>=0.6.7",
+    "pydantic>=2.12.5",
+    "streamlit>=1.53.0",
+    "tavily-python>=0.7.19",
+]
