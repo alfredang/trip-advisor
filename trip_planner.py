@@ -331,6 +331,6 @@ if plan_button:
 # Footer
 st.divider()
 st.markdown(
-    "<div style='text-align: center; color: gray;'>Powered by Multi-Agent AI System</div>",
+    "<div style='text-align: center; color: gray;'>Powered by Tertiary Infotech Academy</div>",
     unsafe_allow_html=True
 )
