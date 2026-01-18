@@ -2,8 +2,8 @@ from dotenv import load_dotenv
 import os
 import streamlit as st
 import asyncio
+import re
 from agents import Runner, Agent, OpenAIChatCompletionsModel, AsyncOpenAI, set_tracing_disabled
-from pydantic import BaseModel
 
 set_tracing_disabled(disabled=True)
 
@@ -24,13 +24,6 @@ client = AsyncOpenAI(
     api_key=api_key,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
-
-class TravelOutput(BaseModel):
-    destination: str
-    duration: str
-    summary: str
-    cost: str
-    tips: str
 
 # ---- Planner Agent (builds day-by-day itinerary) ----
 planner_agent = Agent(
@@ -83,10 +76,9 @@ travel_agent = Agent(
         "2. budget_agent - for cost estimates\n"
         "3. local_guide_agent - for food and local tips\n\n"
         "IMPORTANT: Call all three agents in a SINGLE turn to minimize API calls.\n"
-        "After receiving their responses, combine into the final JSON output immediately.\n"
-        "Do NOT use tavily_search - the agents have the knowledge needed."
+        "After receiving their responses, present the combined travel plan with clear sections:\n"
+        "## Itinerary\n[planner agent response]\n\n## Budget\n[budget agent response]\n\n## Local Tips\n[local guide response]"
     ),
-    output_type=TravelOutput,
     tools=[
         planner_agent.as_tool(
             tool_name="planner_agent",
@@ -148,8 +140,37 @@ with st.sidebar.expander("🤖 Meet the AI Agents"):
     Orchestrates all agents for the final plan
     """)
 
+# ---- Helper function to parse sections ----
+def parse_travel_plan(text: str, destination: str, num_days: int) -> dict:
+    """Parse the travel plan text into sections."""
+    sections = {
+        "destination": destination,
+        "duration": f"{num_days} days",
+        "itinerary": "",
+        "budget": "",
+        "tips": ""
+    }
+
+    # Try to extract sections using regex
+    itinerary_match = re.search(r'##\s*Itinerary\s*(.*?)(?=##|$)', text, re.DOTALL | re.IGNORECASE)
+    budget_match = re.search(r'##\s*Budget\s*(.*?)(?=##|$)', text, re.DOTALL | re.IGNORECASE)
+    tips_match = re.search(r'##\s*(?:Local\s*)?Tips\s*(.*?)(?=##|$)', text, re.DOTALL | re.IGNORECASE)
+
+    if itinerary_match:
+        sections["itinerary"] = itinerary_match.group(1).strip()
+    if budget_match:
+        sections["budget"] = budget_match.group(1).strip()
+    if tips_match:
+        sections["tips"] = tips_match.group(1).strip()
+
+    # If no sections found, use the full text as itinerary
+    if not any([sections["itinerary"], sections["budget"], sections["tips"]]):
+        sections["itinerary"] = text
+
+    return sections
+
 # ---- Async Runner Function ----
-async def generate_trip_plan(destination: str, num_days: int, budget: int, preferences: str) -> TravelOutput:
+async def generate_trip_plan(destination: str, num_days: int, budget: int, preferences: str) -> str:
     """Run the multi-agent system to generate a trip plan."""
     prompt = f"""Plan a {num_days}-day trip to {destination} with a budget of ${budget} USD.
 
@@ -186,7 +207,10 @@ if plan_button:
 
         try:
             # Run the async function
-            result = asyncio.run(generate_trip_plan(destination, num_days, budget, preferences))
+            raw_result = asyncio.run(generate_trip_plan(destination, num_days, budget, preferences))
+
+            # Parse the result
+            result = parse_travel_plan(str(raw_result), destination, num_days)
 
             # Clear status messages
             status_container.empty()
@@ -195,18 +219,18 @@ if plan_button:
             st.divider()
 
             # Display Results
-            st.header(f"🗺️ Your {result.duration} Trip to {result.destination}")
+            st.header(f"🗺️ Your {result['duration']} Trip to {result['destination']}")
 
             # Create tabs for different sections
             tab1, tab2, tab3 = st.tabs(["📋 Itinerary", "💰 Budget Breakdown", "🍣 Local Tips"])
 
             with tab1:
                 st.subheader("🧠 Day-by-Day Itinerary")
-                st.markdown(result.summary)
+                st.markdown(result["itinerary"] or "No itinerary available.")
 
             with tab2:
                 st.subheader("💰 Cost Estimates")
-                st.markdown(result.cost)
+                st.markdown(result["budget"] or "No budget breakdown available.")
 
                 # Budget comparison
                 st.divider()
@@ -218,20 +242,20 @@ if plan_button:
 
             with tab3:
                 st.subheader("🍣 Local Recommendations & Tips")
-                st.markdown(result.tips)
+                st.markdown(result["tips"] or "No local tips available.")
 
             # Download option
             st.divider()
-            full_plan = f"""# {result.destination} Trip Plan ({result.duration})
+            full_plan = f"""# {result['destination']} Trip Plan ({result['duration']})
 
 ## Itinerary
-{result.summary}
+{result['itinerary']}
 
 ## Budget
-{result.cost}
+{result['budget']}
 
 ## Local Tips
-{result.tips}
+{result['tips']}
 """
             st.download_button(
                 label="📥 Download Trip Plan",
