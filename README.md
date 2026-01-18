@@ -2,7 +2,7 @@
 
 An interactive Streamlit web app that uses multiple specialized AI agents to create comprehensive travel plans.
 
-🔗 **[Live Demo](https://tripplannerpy-hftrotqj67bccfezasz7iz.streamlit.app/)**
+🔗 **[Live Demo](https://trip-advisor-gemini.streamlit.app/)**
 
 ## Features
 
