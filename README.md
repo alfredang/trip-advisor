@@ -34,13 +34,13 @@ An interactive Streamlit web app that uses multiple specialized AI agents to cre
 
 3. Create a `.env` file with your API keys:
    ```
-   GEMINI_API_KEY=your_gemini_api_key
+   OPENROUTER_API_KEY=your_openrouter_api_key
    TAVILY_API_KEY=your_tavily_api_key
    ```
 
 4. Run the app:
    ```bash
-   streamlit run trip_planner.py
+   streamlit run trip_planner_openrouter.py
    ```
 
 ## Usage
@@ -62,7 +62,8 @@ The app will display your personalized trip plan with:
 
 - **Streamlit** - Web interface
 - **OpenAI Agents SDK** - Multi-agent orchestration
-- **Gemini 2.0 Flash** - LLM backend
+- **OpenRouter** - LLM API gateway
+- **Gemini 2.5 Flash Lite** - LLM backend
 - **Tavily** - Real-time web search
 - **Pydantic** - Data validation
 
