@@ -3,12 +3,15 @@ import os
 import streamlit as st
 import asyncio
 import re
-from agents import Runner, Agent, OpenAIChatCompletionsModel, AsyncOpenAI, set_tracing_disabled
+from agents import Runner, Agent, OpenAIChatCompletionsModel, AsyncOpenAI, set_tracing_disabled, function_tool
+from tavily import TavilyClient
 
 set_tracing_disabled(disabled=True)
 
 load_dotenv()
 api_key = os.environ.get("GEMINI_API_KEY")
+tavily_api_key = os.environ.get("TAVILY_API_KEY")
+tavily_client = TavilyClient(api_key=tavily_api_key) if tavily_api_key else None
 
 # ---- Streamlit Page Config ----
 st.set_page_config(
@@ -23,6 +26,38 @@ st.markdown("Plan your perfect trip with our team of specialized AI agents!")
 client = AsyncOpenAI(
     api_key=api_key,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+)
+
+# ---- Tavily Search Tool (limited usage) ----
+@function_tool
+def search_web(query: str) -> str:
+    """Search the web for current travel information. Use sparingly - only for essential real-time info like current events, recent openings, or travel advisories."""
+    if not tavily_client:
+        return "Web search unavailable - TAVILY_API_KEY not set."
+    try:
+        response = tavily_client.search(query=query, max_results=3)
+        results = []
+        for r in response.get("results", []):
+            results.append(f"- {r.get('title', 'No title')}: {r.get('content', '')[:200]}")
+        return "\n".join(results) if results else "No results found."
+    except Exception as e:
+        return f"Search error: {str(e)}"
+
+# ---- Research Agent (uses Tavily sparingly for current info) ----
+research_agent = Agent(
+    name="Research Agent",
+    model=OpenAIChatCompletionsModel(
+        model="gemini-2.5-flash-lite",
+        openai_client=client
+    ),
+    instructions=(
+        "You research CURRENT travel information. Use the search tool ONLY ONCE to get essential updates like:\n"
+        "- Current travel advisories or restrictions\n"
+        "- Recent attraction openings/closures\n"
+        "- Current events or festivals during travel dates\n"
+        "Do NOT search for general information you already know. Respond concisely in one message."
+    ),
+    tools=[search_web],
 )
 
 # ---- Planner Agent (builds day-by-day itinerary) ----
@@ -74,10 +109,11 @@ travel_agent = Agent(
         "You orchestrate travel planning by calling these agents IN PARALLEL (all at once, not sequentially):\n"
         "1. planner_agent - for the itinerary\n"
         "2. budget_agent - for cost estimates\n"
-        "3. local_guide_agent - for food and local tips\n\n"
-        "IMPORTANT: Call all three agents in a SINGLE turn to minimize API calls.\n"
+        "3. local_guide_agent - for food and local tips\n"
+        "4. research_agent - ONLY if user needs current/real-time info (advisories, recent events)\n\n"
+        "IMPORTANT: Call agents in a SINGLE turn. Only use research_agent when truly necessary.\n"
         "After receiving their responses, present the combined travel plan with clear sections:\n"
-        "## Itinerary\n[planner agent response]\n\n## Budget\n[budget agent response]\n\n## Local Tips\n[local guide response]"
+        "## Itinerary\n[planner agent response]\n\n## Budget\n[budget agent response]\n\n## Local Tips\n[local guide response]\n\n## Current Updates\n[research agent response, if used]"
     ),
     tools=[
         planner_agent.as_tool(
@@ -88,7 +124,10 @@ travel_agent = Agent(
             tool_description="Estimates trip costs"),
         local_guide_agent.as_tool(
             tool_name="local_guide_agent",
-            tool_description="Provides food and local tips")
+            tool_description="Provides food and local tips"),
+        research_agent.as_tool(
+            tool_name="research_agent",
+            tool_description="Gets CURRENT travel info (advisories, events). Use sparingly - only when real-time data needed.")
     ]
 )
 
@@ -136,6 +175,9 @@ with st.sidebar.expander("🤖 Meet the AI Agents"):
     **🍣 Local Guide Agent**
     Recommends food & local tips
 
+    **🔍 Research Agent**
+    Fetches current travel updates (used sparingly)
+
     **✈️ Travel Agent**
     Orchestrates all agents for the final plan
     """)
@@ -148,13 +190,15 @@ def parse_travel_plan(text: str, destination: str, num_days: int) -> dict:
         "duration": f"{num_days} days",
         "itinerary": "",
         "budget": "",
-        "tips": ""
+        "tips": "",
+        "updates": ""
     }
 
     # Try to extract sections using regex
     itinerary_match = re.search(r'##\s*Itinerary\s*(.*?)(?=##|$)', text, re.DOTALL | re.IGNORECASE)
     budget_match = re.search(r'##\s*Budget\s*(.*?)(?=##|$)', text, re.DOTALL | re.IGNORECASE)
     tips_match = re.search(r'##\s*(?:Local\s*)?Tips\s*(.*?)(?=##|$)', text, re.DOTALL | re.IGNORECASE)
+    updates_match = re.search(r'##\s*(?:Current\s*)?Updates\s*(.*?)(?=##|$)', text, re.DOTALL | re.IGNORECASE)
 
     if itinerary_match:
         sections["itinerary"] = itinerary_match.group(1).strip()
@@ -162,6 +206,8 @@ def parse_travel_plan(text: str, destination: str, num_days: int) -> dict:
         sections["budget"] = budget_match.group(1).strip()
     if tips_match:
         sections["tips"] = tips_match.group(1).strip()
+    if updates_match:
+        sections["updates"] = updates_match.group(1).strip()
 
     # If no sections found, use the full text as itinerary
     if not any([sections["itinerary"], sections["budget"], sections["tips"]]):
@@ -222,13 +268,17 @@ if plan_button:
             st.header(f"🗺️ Your {result['duration']} Trip to {result['destination']}")
 
             # Create tabs for different sections
-            tab1, tab2, tab3 = st.tabs(["📋 Itinerary", "💰 Budget Breakdown", "🍣 Local Tips"])
+            tabs = ["📋 Itinerary", "💰 Budget Breakdown", "🍣 Local Tips"]
+            if result.get("updates"):
+                tabs.append("🔍 Current Updates")
 
-            with tab1:
+            tab_objects = st.tabs(tabs)
+
+            with tab_objects[0]:
                 st.subheader("🧠 Day-by-Day Itinerary")
                 st.markdown(result["itinerary"] or "No itinerary available.")
 
-            with tab2:
+            with tab_objects[1]:
                 st.subheader("💰 Cost Estimates")
                 st.markdown(result["budget"] or "No budget breakdown available.")
 
@@ -240,9 +290,14 @@ if plan_button:
                     delta=None
                 )
 
-            with tab3:
+            with tab_objects[2]:
                 st.subheader("🍣 Local Recommendations & Tips")
                 st.markdown(result["tips"] or "No local tips available.")
+
+            if result.get("updates") and len(tab_objects) > 3:
+                with tab_objects[3]:
+                    st.subheader("🔍 Current Travel Updates")
+                    st.markdown(result["updates"])
 
             # Download option
             st.divider()
@@ -256,6 +311,11 @@ if plan_button:
 
 ## Local Tips
 {result['tips']}
+"""
+            if result.get("updates"):
+                full_plan += f"""
+## Current Updates
+{result['updates']}
 """
             st.download_button(
                 label="📥 Download Trip Plan",
